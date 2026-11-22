@@ -10,8 +10,11 @@ Cliente nativo Android del proyecto **Mando Virtual para Carreras**. Sustituye a
 flutter_app_src/
 ├── lib/main.dart                       # Toda la app (UI + protocolo + giroscopio)
 ├── pubspec.yaml                        # Dependencias fijadas
-├── android/app/src/main/AndroidManifest.xml
-└── .github/workflows/build-apk.yml     # Compilación remota
+└── .github/workflows/build-apk.yml     # Genera el proyecto Android y compila remotamente
+
+El workflow genera la carpeta `android/` con `flutter create` y después parchea el
+manifiesto para añadir permisos de red, `usesCleartextTraffic` (necesario para `ws://`)
+y el nombre "Mando Virtual". Por eso no se versiona el manifiesto.
 ```
 
 ## Compilar el APK (recomendado: GitHub Actions)
