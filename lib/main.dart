@@ -67,6 +67,12 @@ class _MandoHomeState extends State<MandoHome> {
   int _buttons = 0;
   double _lx = 0, _ly = 0, _rx = 0, _ry = 0, _lt = 0, _rt = 0;
 
+  // HUD con datos reales
+  int _gear = 0;
+  int _packetsSent = 0;
+  int _pps = 0;
+  Timer? _ppsTimer;
+
   // Arrastre del volante táctil
   int? _wheelPointer;
   double _wheelStartX = 0;
@@ -107,6 +113,7 @@ class _MandoHomeState extends State<MandoHome> {
   @override
   void dispose() {
     _ticker?.cancel();
+    _ppsTimer?.cancel();
     _accelSub?.cancel();
     _serverSub?.cancel();
     _channel?.sink.close();
@@ -306,6 +313,13 @@ class _MandoHomeState extends State<MandoHome> {
       _ticker = Timer.periodic(const Duration(milliseconds: 16), (_) {
         _sendPacket();
       });
+      _ppsTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted) return;
+        setState(() {
+          _pps = _packetsSent;
+          _packetsSent = 0;
+        });
+      });
     } catch (e) {
       _logLine('No se pudo conectar: $e');
       _markDisconnected();
@@ -315,6 +329,10 @@ class _MandoHomeState extends State<MandoHome> {
   void _disconnectLocal() {
     _ticker?.cancel();
     _ticker = null;
+    _ppsTimer?.cancel();
+    _ppsTimer = null;
+    _pps = 0;
+    _packetsSent = 0;
     _stopGyro(log: false);
     _serverSub?.cancel();
     _serverSub = null;
@@ -384,6 +402,7 @@ class _MandoHomeState extends State<MandoHome> {
     data.setFloat32(27, _calTrigger(_lt), Endian.little);
     data.setFloat32(31, _calTrigger(_rt), Endian.little);
     ch.sink.add(data.buffer.asUint8List());
+    _packetsSent++;
   }
 
   void _changeProfile(String value) {
@@ -473,6 +492,9 @@ class _MandoHomeState extends State<MandoHome> {
       backgroundColor: const Color(0xFF070B10),
       body: Stack(
         children: [
+          const Positioned.fill(
+            child: CustomPaint(painter: _RacingBackgroundPainter()),
+          ),
           Positioned.fill(child: _buildRacingLayout()),
           Positioned(
             top: 0,
@@ -483,24 +505,29 @@ class _MandoHomeState extends State<MandoHome> {
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 child: Row(
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: Colors.green.shade700),
-                      ),
-                      child: const Row(
+                    _glassChip(
+                      child: Row(
                         mainAxisSize: MainAxisSize.min,
-                        children: [
+                        children: const [
                           Icon(Icons.wifi, size: 14, color: Colors.greenAccent),
-                          SizedBox(width: 4),
+                          SizedBox(width: 5),
                           Text('EN LÍNEA',
                               style: TextStyle(
-                                  fontSize: 11, fontWeight: FontWeight.bold)),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 1.2)),
                         ],
                       ),
+                      borderColor: Colors.green.shade700,
+                    ),
+                    const SizedBox(width: 6),
+                    _glassChip(
+                      child: Text('$_pps PPS',
+                          style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1,
+                              color: Color(0xFF00E5FF))),
                     ),
                     const Spacer(),
                     IconButton(
@@ -521,6 +548,34 @@ class _MandoHomeState extends State<MandoHome> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _glassChip({
+    required Widget child,
+    Color? borderColor,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Colors.white.withValues(alpha: 0.10),
+            Colors.white.withValues(alpha: 0.03),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: borderColor ?? Colors.white.withValues(alpha: 0.18),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.35),
+            blurRadius: 8,
+          ),
+        ],
+      ),
+      child: child,
     );
   }
 
@@ -574,9 +629,11 @@ class _MandoHomeState extends State<MandoHome> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    _roundGear('+', 4, Colors.cyan),
-                    const SizedBox(height: 10),
-                    _roundGear('-', 5, Colors.cyan),
+                    _roundGear('+', 4, Colors.cyan, shift: 1),
+                    const SizedBox(height: 6),
+                    _gearDisplay(),
+                    const SizedBox(height: 6),
+                    _roundGear('-', 5, Colors.cyan, shift: -1),
                     const SizedBox(height: 10),
                     _HoldButton(
                       label: 'F. MANO',
@@ -693,20 +750,70 @@ class _MandoHomeState extends State<MandoHome> {
       width: double.infinity,
       height: double.infinity,
       fill: _axisValue(axis),
+      showScale: true,
       onDown: () => _setAxis(axis, 1),
       onUp: () => _setAxis(axis, 0),
     );
   }
 
-  Widget _roundGear(String label, int bit, Color color) {
+  Widget _roundGear(String label, int bit, Color color, {required int shift}) {
     return _HoldButton(
       label: label,
       color: color,
       width: 58,
       height: 58,
       circular: true,
-      onDown: () => _setButton(bit, true),
+      onDown: () {
+        _setButton(bit, true);
+        setState(() {
+          final next = _gear + shift;
+          _gear = next < -1 ? -1 : (next > 6 ? 6 : next);
+        });
+      },
       onUp: () => _setButton(bit, false),
+    );
+  }
+
+  Widget _gearDisplay() {
+    return Container(
+      width: 64,
+      height: 66,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0x2200E5FF), Color(0x0800E5FF)],
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF00E5FF), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF00E5FF).withValues(alpha: 0.25),
+            blurRadius: 12,
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            _gear < 0 ? 'R' : '$_gear',
+            style: const TextStyle(
+              color: Color(0xFF00E5FF),
+              fontSize: 30,
+              fontWeight: FontWeight.bold,
+              height: 1,
+            ),
+          ),
+          const SizedBox(height: 3),
+          const Text('MARCHA',
+              style: TextStyle(
+                  color: Colors.white54,
+                  fontSize: 8,
+                  letterSpacing: 1.2)),
+        ],
+      ),
     );
   }
 
@@ -1264,6 +1371,7 @@ class _HoldButton extends StatefulWidget {
     this.height = 60,
     this.circular = false,
     this.fill,
+    this.showScale = false,
   });
 
   final String label;
@@ -1277,6 +1385,9 @@ class _HoldButton extends StatefulWidget {
 
   /// Si se indica, dibuja un relleno ascendente (para pedales).
   final double? fill;
+
+  /// Dibuja marcas de escala y zona roja (solo pedales verticales).
+  final bool showScale;
 
   @override
   State<_HoldButton> createState() => _HoldButtonState();
@@ -1355,6 +1466,10 @@ class _HoldButtonState extends State<_HoldButton> {
                   ),
                 ),
               ),
+            if (widget.showScale)
+              Positioned.fill(
+                child: CustomPaint(painter: const _PedalScalePainter()),
+              ),
             Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -1367,6 +1482,7 @@ class _HoldButtonState extends State<_HoldButton> {
                     color: Colors.white,
                     fontSize: 11,
                     fontWeight: FontWeight.bold,
+                    letterSpacing: 1.1,
                   ),
                 ),
               ],
@@ -1378,7 +1494,92 @@ class _HoldButtonState extends State<_HoldButton> {
   }
 }
 
-/// Volante dibujado con Canvas: aro, arco de giro, radios y cubo.
+/// Fondo del modo carreras: degradado radial, fibra de carbono y rejilla.
+class _RacingBackgroundPainter extends CustomPainter {
+  const _RacingBackgroundPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..shader = const RadialGradient(
+          center: Alignment(-0.25, -0.55),
+          radius: 1.3,
+          colors: [Color(0xFF0C2A3E), Color(0xFF050A11)],
+        ).createShader(rect),
+    );
+
+    final carbon = Paint()
+      ..color = const Color(0x0AFFFFFF)
+      ..strokeWidth = 12;
+    for (double x = -size.height; x < size.width + size.height; x += 30) {
+      canvas.drawLine(
+        Offset(x, 0),
+        Offset(x + size.height, size.height),
+        carbon,
+      );
+    }
+
+    final grid = Paint()
+      ..color = const Color(0x0A00E5FF)
+      ..strokeWidth = 1;
+    for (double x = 0; x < size.width; x += 52) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), grid);
+    }
+    for (double y = 0; y < size.height; y += 52) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+    }
+
+    canvas.drawRect(
+      Rect.fromLTWH(0, size.height * 0.82, size.width, size.height * 0.18),
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.center,
+          colors: [Color(0x3300E5FF), Color(0x0000E5FF)],
+        ).createShader(rect),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+/// Reglón con marcas y zona roja para los pedales verticales.
+class _PedalScalePainter extends CustomPainter {
+  const _PedalScalePainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final x = size.width - 14;
+    final top = size.height * 0.16;
+    final bottom = size.height * 0.84;
+    final h = bottom - top;
+    if (h <= 0) return;
+
+    canvas.drawRect(
+      Rect.fromLTWH(x - 3, top, 6, h * 0.18),
+      Paint()
+        ..color = const Color(0xFFFF5252).withValues(alpha: 0.75),
+    );
+
+    final tick = Paint()
+      ..color = const Color(0x99FFFFFF)
+      ..strokeWidth = 1.5;
+    for (var i = 0; i <= 10; i++) {
+      final y = bottom - h * i / 10;
+      final len = i % 5 == 0 ? 12.0 : 6.0;
+      canvas.drawLine(Offset(x - len, y), Offset(x, y), tick);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+/// Volante dibujado con Canvas: aro carbono, glow, arco, escala y cubo.
 class _WheelPainter extends CustomPainter {
   const _WheelPainter({required this.value});
 
@@ -1391,41 +1592,106 @@ class _WheelPainter extends CustomPainter {
     if (radius <= 0) return;
 
     final rect = Rect.fromCircle(center: center, radius: radius);
-
-    final rim = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = radius * 0.16
-      ..shader = const LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [Color(0xFF0B2E4A), Color(0xFF007ACC)],
-      ).createShader(rect);
-    canvas.drawCircle(center, radius, rim);
-
-    final arcBg = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = radius * 0.1
-      ..strokeCap = StrokeCap.round
-      ..color = const Color(0x33FFFFFF);
     const start = -math.pi * 0.75;
     const sweep = math.pi * 1.5;
-    canvas.drawArc(rect, start, sweep, false, arcBg);
+    final progress = sweep * ((value + 1) / 2);
 
-    final arc = Paint()
+    // Glow exterior del aro
+    canvas.drawCircle(
+      center,
+      radius * 0.96,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = radius * 0.22
+        ..color = const Color(0x2200E5FF)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
+    );
+
+    // Aro carbono
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = radius * 0.16
+        ..shader = const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF0B2E4A), Color(0xFF182635)],
+        ).createShader(rect),
+    );
+
+    // Arco base
+    canvas.drawArc(
+      rect,
+      start,
+      sweep,
+      false,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = radius * 0.10
+        ..strokeCap = StrokeCap.round
+        ..color = const Color(0x33FFFFFF),
+    );
+
+    // Zonas rojas en los extremos
+    final red = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = radius * 0.1
+      ..strokeWidth = radius * 0.10
       ..strokeCap = StrokeCap.round
-      ..color = const Color(0xFF00E5FF);
-    canvas.drawArc(rect, start, sweep * ((value + 1) / 2), false, arc);
+      ..color = const Color(0xFFFF5252).withValues(alpha: 0.85);
+    canvas.drawArc(rect, start, sweep * 0.10, false, red);
+    canvas.drawArc(rect, start + sweep * 0.90, sweep * 0.10, false, red);
 
+    // Arco de giro con glow
+    canvas.drawArc(
+      rect,
+      start,
+      progress,
+      false,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = radius * 0.14
+        ..strokeCap = StrokeCap.round
+        ..color = const Color(0x6600E5FF)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
+    );
+    canvas.drawArc(
+      rect,
+      start,
+      progress,
+      false,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = radius * 0.10
+        ..strokeCap = StrokeCap.round
+        ..shader = const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF00B0FF), Color(0xFF00E5FF)],
+        ).createShader(rect),
+    );
+
+    // Marcas de escala
+    final tick = Paint()
+      ..color = const Color(0x66FFFFFF)
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round;
+    for (var i = 0; i <= 6; i++) {
+      final a = start + sweep * i / 6;
+      final dir = Offset(math.cos(a), math.sin(a));
+      final inner = i % 3 == 0 ? radius * 0.80 : radius * 0.86;
+      canvas.drawLine(center + dir * inner, center + dir * (radius * 0.94), tick);
+    }
+
+    // Radios: dos brazos laterales + uno inferior
     canvas.save();
     canvas.translate(center.dx, center.dy);
     canvas.rotate(value * math.pi * 0.75);
     final spoke = Paint()
-      ..color = const Color(0xAAFFFFFF)
+      ..color = const Color(0xCCE6F6FF)
       ..strokeWidth = radius * 0.06
       ..strokeCap = StrokeCap.round;
-    // Dos brazos laterales + uno inferior: aspecto de volante real.
     for (final a in [0.0, math.pi, math.pi / 2]) {
       final dx = math.cos(a);
       final dy = math.sin(a);
@@ -1437,6 +1703,7 @@ class _WheelPainter extends CustomPainter {
     }
     canvas.restore();
 
+    // Cubo
     canvas.drawCircle(
         center, radius * 0.26, Paint()..color = const Color(0xFF0B1622));
     canvas.drawCircle(
@@ -1447,6 +1714,7 @@ class _WheelPainter extends CustomPainter {
         ..strokeWidth = 2
         ..color = const Color(0xFF00E5FF),
     );
+    canvas.drawCircle(center, radius * 0.05, Paint()..color = const Color(0xFF00E5FF));
   }
 
   @override
