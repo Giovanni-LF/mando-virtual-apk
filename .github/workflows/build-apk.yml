@@ -54,6 +54,9 @@ jobs:
           PY
           grep -E 'INTERNET|usesCleartextTraffic|android:label' android/app/src/main/AndroidManifest.xml
 
+      - name: Quitar test autogenerado
+        run: rm -rf test
+
       - name: Instalar dependencias
         run: flutter pub get
 
