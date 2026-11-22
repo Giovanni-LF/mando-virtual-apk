@@ -177,6 +177,25 @@ class _MandoHomeState extends State<MandoHome> {
     });
   }
 
+  double _axisValue(String axis) {
+    switch (axis) {
+      case 'lx':
+        return _lx;
+      case 'ly':
+        return _ly;
+      case 'rx':
+        return _rx;
+      case 'ry':
+        return _ry;
+      case 'lt':
+        return _lt;
+      case 'rt':
+        return _rt;
+      default:
+        return 0;
+    }
+  }
+
   // ---------- Giroscopio ----------
 
   void _stopGyro({bool log = true}) {
@@ -233,7 +252,8 @@ class _MandoHomeState extends State<MandoHome> {
       var delta = angle - _gyroZero;
       delta = math.atan2(math.sin(delta), math.cos(delta));
 
-      var target = _clamp((delta * 180 / math.pi) / _gyroRange, -1, 1);
+      // En apaisado de pie el signo va al revés; lo invertimos por defecto.
+      var target = _clamp((-delta * 180 / math.pi) / _gyroRange, -1, 1);
       if (_gyroInvert) target = -target;
       if (target.abs() < _deadzone) target = 0;
 
@@ -512,18 +532,19 @@ class _MandoHomeState extends State<MandoHome> {
       // y caber en pantallas apaisadas de ~360 dp de alto.
       final wheelSize = math.min(w * 0.36, h * 0.58);
 
-      return SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(10, 46, 10, 8),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              SizedBox(
-                width: wheelSize,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _buildTouchWheel(wheelSize),
+      // Sin SafeArea aquí: aprovechamos todo el ancho y evitamos la franja
+      // negra del recorte de pantalla. El overlay superior ya tiene SafeArea.
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(10, 46, 10, 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              width: wheelSize,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _buildTouchWheel(wheelSize),
                     const SizedBox(height: 10),
                     _HoldButton(
                       label: _gyro ? 'GYRO ON' : 'GYRO OFF',
@@ -595,6 +616,7 @@ class _MandoHomeState extends State<MandoHome> {
                       color: Colors.purple,
                       width: double.infinity,
                       height: 42,
+                      fill: _ry,
                       onDown: () => _setAxis('ry', 1),
                       onUp: () => _setAxis('ry', 0),
                     ),
@@ -615,8 +637,7 @@ class _MandoHomeState extends State<MandoHome> {
                   ],
                 ),
               ),
-            ],
-          ),
+          ],
         ),
       );
     });
@@ -651,21 +672,13 @@ class _MandoHomeState extends State<MandoHome> {
           ),
         ),
         IgnorePointer(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '${(_wheelValue * 180).round()}°',
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold),
-              ),
-              Text(
-                _gyro ? 'GIRO' : 'TÁCTIL',
-                style: const TextStyle(color: Colors.white54, fontSize: 9),
-              ),
-            ],
+          child: Text(
+            '${(_wheelValue * 180).round()}°',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ),
       ],
@@ -679,6 +692,7 @@ class _MandoHomeState extends State<MandoHome> {
       color: color,
       width: double.infinity,
       height: double.infinity,
+      fill: _axisValue(axis),
       onDown: () => _setAxis(axis, 1),
       onUp: () => _setAxis(axis, 0),
     );
@@ -1249,6 +1263,7 @@ class _HoldButton extends StatefulWidget {
     this.width = 60,
     this.height = 60,
     this.circular = false,
+    this.fill,
   });
 
   final String label;
@@ -1259,6 +1274,9 @@ class _HoldButton extends StatefulWidget {
   final bool circular;
   final VoidCallback onDown;
   final VoidCallback onUp;
+
+  /// Si se indica, dibuja un relleno ascendente (para pedales).
+  final double? fill;
 
   @override
   State<_HoldButton> createState() => _HoldButtonState();
@@ -1300,9 +1318,15 @@ class _HoldButtonState extends State<_HoldButton> {
         width: widget.width,
         height: widget.height,
         margin: const EdgeInsets.all(2),
-        alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: widget.color.withValues(alpha: pressed ? 0.85 : 0.28),
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              widget.color.withValues(alpha: pressed ? 0.80 : 0.34),
+              widget.color.withValues(alpha: pressed ? 0.45 : 0.14),
+            ],
+          ),
           borderRadius: BorderRadius.circular(
               widget.circular ? math.min(widget.width, widget.height) / 2 : 16),
           border: Border.all(
@@ -1316,19 +1340,36 @@ class _HoldButtonState extends State<_HoldButton> {
             ),
           ],
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+        child: Stack(
+          alignment: Alignment.center,
           children: [
-            if (widget.icon != null)
-              Icon(widget.icon, color: Colors.white, size: 22),
-            Text(
-              widget.label,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
+            if (widget.fill != null)
+              Positioned.fill(
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  heightFactor: widget.fill!.clamp(0.0, 1.0).toDouble(),
+                  child: SizedBox.expand(
+                    child: ColoredBox(
+                      color: widget.color.withValues(alpha: 0.45),
+                    ),
+                  ),
+                ),
               ),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.icon != null)
+                  Icon(widget.icon, color: Colors.white, size: 22),
+                Text(
+                  widget.label,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -1384,11 +1425,12 @@ class _WheelPainter extends CustomPainter {
       ..color = const Color(0xAAFFFFFF)
       ..strokeWidth = radius * 0.06
       ..strokeCap = StrokeCap.round;
-    for (final a in [0.0, 2 * math.pi / 3, 4 * math.pi / 3]) {
+    // Dos brazos laterales + uno inferior: aspecto de volante real.
+    for (final a in [0.0, math.pi, math.pi / 2]) {
       final dx = math.cos(a);
       final dy = math.sin(a);
       canvas.drawLine(
-        Offset(dx * radius * 0.22, dy * radius * 0.22),
+        Offset(dx * radius * 0.26, dy * radius * 0.26),
         Offset(dx * radius * 0.78, dy * radius * 0.78),
         spoke,
       );
@@ -1396,10 +1438,10 @@ class _WheelPainter extends CustomPainter {
     canvas.restore();
 
     canvas.drawCircle(
-        center, radius * 0.22, Paint()..color = const Color(0xFF0B1622));
+        center, radius * 0.26, Paint()..color = const Color(0xFF0B1622));
     canvas.drawCircle(
       center,
-      radius * 0.22,
+      radius * 0.26,
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2
