@@ -218,11 +218,11 @@ class _MandoHomeState extends State<MandoHome> {
     _gyroReady = false;
     _gyroSmoothed = 0;
 
-    _accelSub = accelerometerEvents.listen((AccelerometerEvent e) {
+    _accelSub = accelerometerEventStream().listen((AccelerometerEvent e) {
       if (!_gyro) return;
 
       // Con el móvil casi plano el ángulo es inestable: ignoramos esos eventos.
-      if (math.hypot(e.x, e.y) < 2.0) return;
+      if (math.sqrt(e.x * e.x + e.y * e.y) < 2.0) return;
 
       final angle = math.atan2(e.x, e.y);
       if (!_gyroReady) {
@@ -1354,10 +1354,10 @@ class _WheelPainter extends CustomPainter {
     final rim = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = radius * 0.16
-      ..shader = LinearGradient(
+      ..shader = const LinearGradient(
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
-        colors: [const Color(0xFF0B2E4A), const Color(0xFF007ACC)],
+        colors: [Color(0xFF0B2E4A), Color(0xFF007ACC)],
       ).createShader(rect);
     canvas.drawCircle(center, radius, rim);
 
@@ -1366,8 +1366,8 @@ class _WheelPainter extends CustomPainter {
       ..strokeWidth = radius * 0.1
       ..strokeCap = StrokeCap.round
       ..color = const Color(0x33FFFFFF);
-    final start = -math.pi * 0.75;
-    final sweep = math.pi * 1.5;
+    const start = -math.pi * 0.75;
+    const sweep = math.pi * 1.5;
     canvas.drawArc(rect, start, sweep, false, arcBg);
 
     final arc = Paint()
