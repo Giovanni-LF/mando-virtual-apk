@@ -19,3 +19,13 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  fonts:
+    - family: Audiowide
+      fonts:
+        - asset: fonts/Audiowide-Regular.ttf
+    - family: Rajdhani
+      fonts:
+        - asset: fonts/Rajdhani-Bold.ttf
+    - family: ShareTechMono
+      fonts:
+        - asset: fonts/ShareTechMono-Regular.ttf
